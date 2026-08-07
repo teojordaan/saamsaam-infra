@@ -1,0 +1,22 @@
+# Secrets
+certs/
+.env
+
+# Database data
+data/
+
+# Temp/cleanup scripts
+ghcr-purge.sh
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Built frontend — staged here by the build, then copied into
+# teo-infra/nginx/html which is what actually serves it.
+#
+# UNRESOLVED: a standalone deploy needs these committed, because commit → push
+# → pull is the only way files reach a server. But committing them here *and*
+# in teo-infra duplicates ~58 MB per release across two repos. Decide before
+# the first standalone deploy.
+nginx/html/*/
