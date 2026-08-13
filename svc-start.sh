@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# svc-scripts 0.1.0 — canonical copy: agollum/docker/services/
+# svc-scripts 0.0.0 — canonical copy: agollum/docker/services/
 # Edit there and copy the whole set across; svc-compose.sh is sourced by
 # the others, so a half-updated set breaks in ways that look like a bug.
 # Bring the stack up, or the part of it this host needs.
