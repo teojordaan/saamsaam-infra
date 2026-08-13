@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1B6EF3">
   <title>SaamSaam</title>
+  <!-- Flutter substitutes this at build time: "/" by default, or whatever
+       --base-href was passed. Hardcoding "/" here makes --base-href a fatal
+       build error ("Failed to find the placeholder for base href"), so the app
+       could never be served from a subpath. nginx serves it at the domain root
+       today, which is why nobody hit it until the build scripts were reworked. -->
   <base href="/">
   <link rel="manifest" href="/manifest.json">
   <style>
