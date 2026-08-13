@@ -27,7 +27,7 @@ services:
   # api — REST API (live)
   # ═══════════════════════════════════════════════════
   api:
-    image: ghcr.io/teojordaan/saamsaam-api:0.2.2
+    image: ghcr.io/teojordaan/saamsaam-api:0.0.0
     container_name: ${PROJECT_NAME:-saamsaam}-api
     restart: unless-stopped
     env_file: [.env, .env.live]
@@ -49,7 +49,7 @@ services:
   # api-staging — same image, staging tag and database
   # ═══════════════════════════════════════════════════
   api-staging:
-    image: ghcr.io/teojordaan/saamsaam-api:0.2.3
+    image: ghcr.io/teojordaan/saamsaam-api:0.0.0-staging
     container_name: ${PROJECT_NAME:-saamsaam}-api-staging
     restart: unless-stopped
     env_file: [.env, .env.staging]
