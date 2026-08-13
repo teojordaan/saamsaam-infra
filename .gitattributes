@@ -1,2 +1,12 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Anything executed by a shell or read inside a container must keep LF
+# in the WORKING TREE too, not just in the repo. `text=auto` alone
+# checks these out with CRLF on Windows, and bash then fails on the
+# carriage return — which is a clean clone that cannot run its own
+# scripts.
+*.sh      text eol=lf
+*.conf    text eol=lf
+*.yml     text eol=lf
+.env.*    text eol=lf

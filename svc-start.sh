@@ -1,140 +1,50 @@
 #!/usr/bin/env bash
-# Bring the SaamSaam stack up, or just the part of it this host needs.
-# ============================================================
-# SaamSaam — bring the compose stack up.
+# svc-scripts 0.0.0 — canonical copy: agollum/docker/services/
+# Edit there and copy the whole set across; svc-compose.sh is sourced by
+# the others, so a half-updated set breaks in ways that look like a bug.
+# Bring the stack up, or the part of it this host needs.
 #
-# Idempotent: only creates/updates containers as needed. Leaves existing
-# (healthy) containers running. To force-recreate one:
-#   docker compose up -d --force-recreate go-api
+#   --scope private   compose.yml         — always ours (default)
+#   --scope public    public/compose.yml  — only where the host provides none
+#   --scope all       public first, healthy, then private
 #
-# Service groups
-# --------------
-#   private   go-api, go-api-staging      — always ours
-#   public    postgres, redis, nginx      — only when the host has none
-#   all       everything
+# Idempotent: leaves healthy containers alone. Force one to rebuild with
+#   docker compose --env-file .env -f compose.yml up -d --force-recreate api
 #
-# The whole point of the split is that this repo can deploy the stack on ANY
-# server. A bare box runs `--all`. A box already running teo-infra (or
-# gentick-infra) runs `--private`, because postgres, redis and nginx are
-# already there and a second set would fight the first for ports and names.
-#
-# !! --private passes --no-deps, and it has to. go-api declares
-# !! `depends_on: postgres` so a standalone bring-up orders correctly — but
-# !! without --no-deps, `compose up go-api` starts postgres too, which is
-# !! precisely the second database the split exists to avoid. The failure is
-# !! quiet: the api talks to whichever container won the name on backend-net.
-#
-# Default scope is `private`, matching the hosts we actually deploy to.
-# ============================================================
+# --scope all waits for public to be healthy before starting private. The compose
+# files carry no depends_on because every dependency they could express crosses
+# the private/public line, and `compose up` on one side would then silently
+# start the other — a second database, which is what the split exists to
+# prevent. The ordering lives here instead.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
-COMPOSE_FILE="${COMPOSE_FILE:-$SCRIPT_DIR/compose.yml}"
-HEALTH_INTERVAL="${HEALTH_INTERVAL:-5}"
+svc_log() { printf '[start] %s\n' "$*"; }
+svc_err() { printf '[start] %s\n' "$*" >&2; }
+die()     { printf '[start] FATAL: %s\n' "$*" >&2; exit 1; }
 
-cd "$SCRIPT_DIR"
+# shellcheck source=svc-compose.sh
+source "$SCRIPT_DIR/svc-compose.sh" || die "svc-compose.sh not found"
 
-log() { printf '[start] %s\n' "$*"; }
-die() { printf '[start] FATAL: %s\n' "$*" >&2; exit 1; }
-
-[[ -f "$ENV_FILE" ]]     || die "$ENV_FILE not found"
-[[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found"
-
-HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
-
-# ---- service groups (edit these to change what each scope starts) ----
-# Names must match the service keys in compose.yml.
-PRIVATE_SVCS=(go-api go-api-staging)
-PUBLIC_SVCS=(postgres redis nginx)
-ALL_SVCS=(postgres redis go-api go-api-staging nginx)
-
-SCOPE="private"
-while (( $# )); do
-  case "$1" in
-    --private) SCOPE="private" ;;
-    --public)  SCOPE="public"  ;;
-    --all)     SCOPE="all"     ;;
-    -h|--help)
-      sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-      exit 0 ;;
-    *) die "unknown argument: $1 (expected --private, --public or --all)" ;;
-  esac
-  shift
-done
-
-case "$SCOPE" in
-  private) SVCS=("${PRIVATE_SVCS[@]}"); NO_DEPS=(--no-deps) ;;
-  public)  SVCS=("${PUBLIC_SVCS[@]}");  NO_DEPS=(--no-deps) ;;
-  all)     SVCS=("${ALL_SVCS[@]}");     NO_DEPS=() ;;
+case "${1:-}" in
+  -h|--help) awk 'NR>4 && /^#/ { sub(/^# ?/,""); print; next } NR>4 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
 esac
 
-compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
-}
+SCOPE="$(svc_parse_scope "$@")" || exit 2
 
-# backend-net is external — this stack joins it, never creates it. Without a
-# shared-infra stack running there is nothing to create it, and compose fails
-# with an error that reads like a typo rather than a missing prerequisite.
-SHARED_NET_NAME="$(grep -E '^SHARED_NET=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' || true)"
-SHARED_NET_NAME="${SHARED_NET_NAME:-backend-net}"
-if ! docker network inspect "$SHARED_NET_NAME" >/dev/null 2>&1; then
-  log "shared network '$SHARED_NET_NAME' does not exist — creating it"
-  docker network create "$SHARED_NET_NAME" >/dev/null || die "could not create $SHARED_NET_NAME"
-fi
+[[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found — run ./svc-build-env.sh first"
 
-log "scope=$SCOPE — starting: ${SVCS[*]}"
-if ! compose up -d "${NO_DEPS[@]}" "${SVCS[@]}"; then
-  die "compose up failed"
-fi
+while read -r file; do
+  [[ -f "$file" ]] || die "$file not found"
+  label="$(basename "$(dirname "$file")")"
 
-log "Waiting up to ${HEALTH_TIMEOUT}s for containers to become healthy"
-deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+  svc_ensure_networks "$file" || die "could not create the networks $label needs"
 
-while :; do
-  mapfile -t cids < <(compose ps -q "${SVCS[@]}")
-  if [[ ${#cids[@]} -eq 0 ]]; then
-    die "no containers running after compose up"
-  fi
+  svc_log "starting $label"
+  compose "$file" up -d || die "compose up failed for $file"
 
-  bad=0; starting=0; ok=0; total=${#cids[@]}
-  reasons=()
+  svc_log "waiting up to ${HEALTH_TIMEOUT}s for $label to become healthy"
+  svc_wait_healthy "$file" || die "$label is not healthy"
+done < <(svc_files_for_scope "$SCOPE")
 
-  for cid in "${cids[@]}"; do
-    name=$(docker inspect --format '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
-    state=$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null)
-    hs=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null)
-
-    case "$state" in
-      running) : ;;
-      restarting) starting=$((starting+1)); reasons+=("${name}: restarting"); continue ;;
-      *) bad=$((bad+1)); reasons+=("${name}: ${state}"); continue ;;
-    esac
-
-    case "$hs" in
-      healthy|none) ok=$((ok+1));;
-      starting)     starting=$((starting+1));;
-      unhealthy)    bad=$((bad+1)); reasons+=("${name}: unhealthy");;
-      *)            starting=$((starting+1));;
-    esac
-  done
-
-  if (( bad > 0 )); then
-    for r in "${reasons[@]}"; do log "$r"; done
-    compose ps
-    die "one or more services are not healthy"
-  fi
-
-  if (( ok == total )); then
-    log "DONE — ${ok}/${total} containers healthy"
-    exit 0
-  fi
-
-  if (( $(date +%s) >= deadline )); then
-    for r in "${reasons[@]}"; do log "$r"; done
-    compose ps
-    die "timed out waiting for healthy (${starting} still starting)"
-  fi
-
-  sleep "$HEALTH_INTERVAL"
-done
+svc_log "DONE — scope=$SCOPE"

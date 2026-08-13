@@ -1,135 +1,96 @@
 #!/usr/bin/env bash
-# ============================================================
-# SaamSaam — pull images defined in compose.yml.
+# svc-scripts 0.0.0 — canonical copy: agollum/docker/services/
+# Edit there and copy the whole set across; svc-compose.sh is sourced by
+# the others, so a half-updated set breaks in ways that look like a bug.
+# Pull the images the compose files name, then recreate.
 #
-# Image tags are now hardcoded in compose.yml (not in
-# .env). This script reads them from the compose file so there's
-# no duplication — bump the tag in one place.
+#   --scope private   compose.yml         — always ours (default)
+#   --scope public    public/compose.yml  — only where the host provides none
+#   --scope all       both
+#   --force           remove local copies first, so an in-place rebuild at the
+#                     SAME version tag actually lands
 #
-# --force / -f <scope> — delete local copies before pulling so
-# an in-place rebuild at the SAME version tag lands.
-# Scopes: private (ghcr.io images), public (docker hub), all.
-# ============================================================
+# Image tags live in the compose files, so this reads them from there rather
+# than keeping its own list.
+#
+# Registry credentials are NOT handled here. Run `docker login ghcr.io` once per
+# host and docker keeps the credential. A PAT in .env would sit in plaintext on
+# every box holding a copy of this repo, in the first file anyone would open.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
-COMPOSE_FILE="${COMPOSE_FILE:-$SCRIPT_DIR/compose.yml}"
-cd "$SCRIPT_DIR"
+svc_log() { printf '[update] %s\n' "$*"; }
+svc_err() { printf '[update] %s\n' "$*" >&2; }
+die()     { printf '[update] FATAL: %s\n' "$*" >&2; exit 1; }
 
-log() { printf '[update] %s\n' "$*"; }
-die() { printf '[update] FATAL: %s\n' "$*" >&2; exit 1; }
+# shellcheck source=svc-compose.sh
+source "$SCRIPT_DIR/svc-compose.sh" || die "svc-compose.sh not found"
 
-# ------------------------------------------------------------
-# GHCR credentials — source from .env (built by build-env.py)
-# ------------------------------------------------------------
 GHCR_REGISTRY="ghcr.io"
-
-if [[ -f "$ENV_FILE" ]]; then
-  set -a; source "$ENV_FILE"; set +a
-fi
-
-GHCR_USER="${GHCR_USER:-}"
-GHCR_PAT="${GHCR_PAT:-}"
-
-# ------------------------------------------------------------
-# Parse image refs from the compose file (the one source of truth)
-# ------------------------------------------------------------
-# We use `docker compose config` so Docker's YAML parser does the work.
-# Image tags are now hardcoded in the compose file, so no env vars
-# are needed to resolve them — but we still pass --env-file in case
-# other compose-level vars (ports, volumes) need values.
-COMPOSE_CMD=(docker compose -f "$COMPOSE_FILE")
-[[ -f "$ENV_FILE" ]] && COMPOSE_CMD+=(--env-file "$ENV_FILE")
-
-mapfile -t ALL_IMAGES < <("${COMPOSE_CMD[@]}" config 2>/dev/null \
-  | grep -E '^\s+image:\s+' | sed 's/.*image:\s*//' | sort -u)
-
-if [[ ${#ALL_IMAGES[@]} -eq 0 ]]; then
-  die "no image: lines found in compose config — is Docker running?"
-fi
-
-# Classify by registry
-PRIVATE_IMAGES=()
-PUBLIC_IMAGES=()
-for img in "${ALL_IMAGES[@]}"; do
-  if [[ "$img" == ghcr.io/* ]]; then
-    PRIVATE_IMAGES+=("$img")
-  else
-    PUBLIC_IMAGES+=("$img")
-  fi
+FORCE=false
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --force|-f) FORCE=true ;;
+    -h|--help)  awk 'NR>4 && /^#/ { sub(/^# ?/,""); print; next } NR>4 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) ARGS+=("$a") ;;
+  esac
 done
 
-log "Images to pull: ${ALL_IMAGES[*]}"
+SCOPE="$(svc_parse_scope "${ARGS[@]+"${ARGS[@]}"}")" || exit 2
+[[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found — run ./svc-build-env.sh first"
 
-# ------------------------------------------------------------
-# Parse --force scope
-# ------------------------------------------------------------
-FORCE_SCOPE=""
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [--force|-f private|public|all]
-
-  --force private   delete local ghcr.io images before pulling
-  --force public    delete local Docker Hub images before pulling
-  --force all       delete everything before pulling
-EOF
+images_in() { # <file> — compose's own error passed through on failure
+  local out rc
+  out="$(compose "$1" config 2>&1)"; rc=$?
+  if (( rc != 0 )); then
+    svc_err "docker compose could not read $1:"
+    printf '%s\n' "$out" | sed 's/^/    /' >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | awk '/^ +image: /{print $2}' | sort -u
 }
-while (( $# )); do
-  case "$1" in
-    -f|--force)
-      [[ $# -ge 2 ]] || { usage; die "--force needs a scope (private|public|all)"; }
-      case "$2" in
-        private|public|all) FORCE_SCOPE="$2" ;;
-        *) usage; die "unknown --force scope: $2" ;;
-      esac
-      shift 2
-      ;;
-    -h|--help) usage; exit 0 ;;
-    *) usage; die "unknown argument: $1" ;;
-  esac
-done
 
-# ------------------------------------------------------------
-# 1) Log in to GHCR
-# ------------------------------------------------------------
-if [[ -n "$GHCR_PAT" ]]; then
-  log "Logging in to ${GHCR_REGISTRY}"
-  if ! printf '%s' "$GHCR_PAT" | docker login "$GHCR_REGISTRY" -u "$GHCR_USER" --password-stdin >/dev/null 2>&1; then
-    die "docker login to ${GHCR_REGISTRY} failed"
-  fi
-  log "Registry login OK"
-else
-  log "No GHCR_PAT set — skipping private registry login (public images only)"
-fi
+private_registry_used=false
 
-# ------------------------------------------------------------
-# 2) --force: nuke local copies
-# ------------------------------------------------------------
-if [[ -n "$FORCE_SCOPE" ]]; then
-  case "$FORCE_SCOPE" in
-    private) TO_REMOVE=( "${PRIVATE_IMAGES[@]}" ) ;;
-    public)  TO_REMOVE=( "${PUBLIC_IMAGES[@]}"  ) ;;
-    all)     TO_REMOVE=( "${ALL_IMAGES[@]}"     ) ;;
-  esac
-  log "force scope: ${FORCE_SCOPE} — removing ${#TO_REMOVE[@]} local image(s)"
-  for ref in "${TO_REMOVE[@]}"; do
-    [[ -n "$ref" ]] || continue
-    if docker image rm -f "$ref" >/dev/null 2>&1; then
-      log "  removed ${ref}"
-    else
-      log "  not cached: ${ref}"
-    fi
+while read -r file; do
+  [[ -f "$file" ]] || die "$file not found"
+  label="$(basename "$(dirname "$file")")"
+
+  mapfile -t IMAGES < <(images_in "$file") || die "could not read $file"
+  (( ${#IMAGES[@]} )) || die "no images resolved from $file"
+  for img in "${IMAGES[@]}"; do
+    [[ "$img" == "$GHCR_REGISTRY"/* ]] && private_registry_used=true
   done
-fi
 
-# ------------------------------------------------------------
-# 3) Pull via docker compose (reads image refs from compose file)
-# ------------------------------------------------------------
-log "Pulling images via docker compose..."
-if ! "${COMPOSE_CMD[@]}" pull; then
-  die "docker compose pull failed"
-fi
+  svc_log "$label images: ${IMAGES[*]}"
 
-log "DONE — all images present"
-exit 0
+  if $FORCE; then
+    for img in "${IMAGES[@]}"; do
+      if docker image rm -f "$img" >/dev/null 2>&1; then
+        svc_log "  removed $img"
+      else
+        svc_log "  not cached: $img"
+      fi
+    done
+  fi
+
+  svc_log "pulling $label"
+  if ! compose "$file" pull; then
+    if $private_registry_used; then
+      svc_err ""
+      svc_err "If that was an authentication error, this host is not logged in"
+      svc_err "to ${GHCR_REGISTRY}. Do it once, by hand:"
+      svc_err ""
+      svc_err "    docker login ${GHCR_REGISTRY}"
+      svc_err ""
+    fi
+    die "pull failed for $file"
+  fi
+
+  svc_log "recreating $label"
+  compose "$file" up -d || die "compose up failed for $file"
+  svc_wait_healthy "$file" || die "$label is not healthy after update"
+done < <(svc_files_for_scope "$SCOPE")
+
+svc_log "DONE — scope=$SCOPE"

@@ -1,9 +1,8 @@
 # Secrets
-certs/
+# .env is built by build-env.sh from the creds directory and never
+# committed. .env.example, .env.live and .env.staging are tracked —
+# they hold no secrets.
 .env
-
-# Database data
-data/
 
 # Temp/cleanup scripts
 ghcr-purge.sh
@@ -12,11 +11,13 @@ ghcr-purge.sh
 .DS_Store
 Thumbs.db
 
-# Built frontend — staged here by the build, then copied into
-# teo-infra/nginx/html which is what actually serves it.
-#
-# UNRESOLVED: a standalone deploy needs these committed, because commit → push
-# → pull is the only way files reach a server. But committing them here *and*
-# in teo-infra duplicates ~58 MB per release across two repos. Decide before
-# the first standalone deploy.
-nginx/html/*/
+# Nothing here ignores service data. postgres and redis write to
+# ${HOST_DATA_ROOT} (/srv/data/<appname> by default), which is
+# outside the repo on purpose — a data directory under a git working
+# tree is one `git clean` away from gone.
+
+# public/nginx/html is NOT ignored. The built frontend is committed
+# there, because commit -> push -> pull is the only way files reach a
+# server and a standalone deploy has to be able to serve it. The
+# build lands there first, then gets copied into teo-infra/nginx/html
+# on hosts where that stack is serving.

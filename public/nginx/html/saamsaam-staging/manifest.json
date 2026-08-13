@@ -1,0 +1,9 @@
+{
+  "name": "SaamSaam",
+  "short_name": "SaamSaam",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1B6EF3",
+  "icons": []
+}

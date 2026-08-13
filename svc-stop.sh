@@ -1,62 +1,43 @@
 #!/usr/bin/env bash
-# ============================================================
-# SaamSaam — bring the docker-compose stack down.
+# svc-scripts 0.0.0 — canonical copy: agollum/docker/services/
+# Edit there and copy the whole set across; svc-compose.sh is sourced by
+# the others, so a half-updated set breaks in ways that look like a bug.
+# Bring the stack down.
 #
-# Usage:  svc-stop.sh [scope]
+#   --scope private   compose.yml         — always ours (default)
+#   --scope public    public/compose.yml  — only where the host provides none
+#   --scope all       private first, then public
 #
-#   scope      what to stop (default: all)
-#     all       stop and remove all services (containers, networks)
-#     private   stop only app images (go-api, nginx)
-#     public    stop only infrastructure (postgres, redis)
+# --scope all stops in the reverse order of svc-start.sh, so the things that depend
+# on postgres are gone before postgres is.
 #
-# Examples:
-#   svc-stop.sh              # stop everything
-#   svc-stop.sh all          # same as default
-#   svc-stop.sh private      # stop only go-api + nginx
-#   svc-stop.sh public       # stop only postgres + redis
-# ============================================================
+# Networks are left alone. They are declared external and created by
+# svc-start.sh, and another stack may be sitting on them.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
-COMPOSE_FILE="${COMPOSE_FILE:-$SCRIPT_DIR/compose.yml}"
+svc_log() { printf '[stop] %s\n' "$*"; }
+svc_err() { printf '[stop] %s\n' "$*" >&2; }
+die()     { printf '[stop] FATAL: %s\n' "$*" >&2; exit 1; }
 
-cd "$SCRIPT_DIR"
+# shellcheck source=svc-compose.sh
+source "$SCRIPT_DIR/svc-compose.sh" || die "svc-compose.sh not found"
 
-SCOPE="${1:-all}"
-
-log() { printf '[stop] %s\n' "$*"; }
-die() { printf '[stop] FATAL: %s\n' "$*" >&2; exit 1; }
-
-[[ -f "$ENV_FILE" ]]     || die "$ENV_FILE not found"
-[[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found"
-
-compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
-}
-
-case "$SCOPE" in
-  all)
-    log "Stopping ALL services"
-    compose down --remove-orphans
-    log "All services stopped"
-    ;;
-
-  private)
-    log "Stopping private services (go-api, nginx)..."
-    compose stop go-api nginx
-    compose rm -f go-api nginx 2>/dev/null || true
-    log "Private services stopped"
-    ;;
-
-  public)
-    log "Stopping public services (postgres, redis)..."
-    compose stop postgres redis
-    compose rm -f postgres redis 2>/dev/null || true
-    log "Public services stopped"
-    ;;
-
-  *)
-    die "Unknown scope: $SCOPE (use: all, private, public)"
-    ;;
+case "${1:-}" in
+  -h|--help) awk 'NR>4 && /^#/ { sub(/^# ?/,""); print; next } NR>4 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
 esac
+
+SCOPE="$(svc_parse_scope "$@")" || exit 2
+
+[[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found"
+
+# Reverse svc-start.sh's order for --all.
+mapfile -t FILES < <(svc_files_for_scope "$SCOPE")
+for (( i=${#FILES[@]}-1; i>=0; i-- )); do
+  file="${FILES[$i]}"
+  [[ -f "$file" ]] || die "$file not found"
+  svc_log "stopping $(basename "$(dirname "$file")")"
+  compose "$file" down --remove-orphans || die "compose down failed for $file"
+done
+
+svc_log "DONE — scope=$SCOPE"
