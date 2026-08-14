@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# svc-scripts 0.1.0 — canonical copy: agollum/docker/services/
+# svc-scripts 0.1.1 — canonical copy: agollum/docker/services/
 # Edit there and copy the whole set across; svc-compose.sh is sourced by
 # the others, so a half-updated set breaks in ways that look like a bug.
 # Bring the stack up, or the part of it this host needs.
@@ -7,6 +7,10 @@
 #   --scope private   compose.yml         — always ours (default)
 #   --scope public    public/compose.yml  — only where the host provides none
 #   --scope all       public first, healthy, then private
+#   --defaults        take the default (private) without prompting
+#
+# With no --scope on an interactive terminal it asks which to start; piped, in
+# cron, or under --defaults it takes private. See svc_resolve_scope.
 #
 # Idempotent: leaves healthy containers alone. Force one to rebuild with
 #   docker compose --env-file .env -f compose.yml up -d --force-recreate api
@@ -30,7 +34,7 @@ case "${1:-}" in
   -h|--help) awk 'NR>4 && /^#/ { sub(/^# ?/,""); print; next } NR>4 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
 esac
 
-SCOPE="$(svc_parse_scope "$@")" || exit 2
+SCOPE="$(svc_resolve_scope "$@")" || exit 2
 
 [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found — run ./svc-build-env.sh first"
 

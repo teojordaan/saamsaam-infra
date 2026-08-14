@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# svc-scripts 0.1.0 — canonical copy: agollum/docker/services/
+# svc-scripts 0.1.1 — canonical copy: agollum/docker/services/
 # Edit there and copy the whole set across; svc-compose.sh is sourced by
 # the others, so a half-updated set breaks in ways that look like a bug.
 # Shared helpers for the svc-*.sh scripts. Sourced, not run.
@@ -32,8 +32,11 @@ svc_files_for_scope() { # <scope> -> echoes compose files, dependency order firs
   esac
 }
 
-svc_parse_scope() { # <args...> -> echoes the scope, defaults to private
-  local scope="private"
+svc_parse_scope() { # <args...> -> echoes the scope if --scope was given, else empty
+  # Empty, not "private": svc_resolve_scope decides between prompting a human and
+  # taking the default, and once a default is baked in here it can no longer tell
+  # "no --scope given" from an explicit "--scope private".
+  local scope=""
   while (( $# )); do
     case "$1" in
       --scope)
@@ -43,9 +46,9 @@ svc_parse_scope() { # <args...> -> echoes the scope, defaults to private
           *) printf 'unknown scope: %s (expected private, public or all)\n' "$2" >&2; return 1 ;;
         esac
         shift ;;
-      # These scripts never prompt, so --defaults has nothing to switch off.
-      # Accepted anyway so "always pass --defaults" holds for every agollum
-      # script without a footnote.
+      # Accepted so "always pass --defaults" holds for every agollum script.
+      # svc_resolve_scope reads it separately to mean "do not prompt, take the
+      # default" — the same job it does in svc-image-purge.sh and svc-build-env.sh.
       --defaults) ;;
       *) printf 'unknown argument: %s (expected --scope private|public|all)\n' "$1" >&2
          return 1 ;;
@@ -53,6 +56,52 @@ svc_parse_scope() { # <args...> -> echoes the scope, defaults to private
     shift
   done
   printf '%s' "$scope"
+}
+
+svc_has_flag() { # <flag> <args...> -> 0 if <flag> appears among the args
+  local want="$1"; shift
+  local a
+  for a in "$@"; do [[ "$a" == "$want" ]] && return 0; done
+  return 1
+}
+
+# The interactive scope menu for the start/stop/update trio. svc-image-purge.sh
+# keeps its own: its scopes differ (host, not all) and it has no default because
+# it destroys things. Here private is the documented default, so an empty answer
+# takes it. Menu and prompt go to stderr; only the chosen scope reaches stdout,
+# so `scope=$(svc_prompt_scope)` captures the answer and nothing else.
+svc_prompt_scope() { # -> echoes private|public|all, or fails on a bad choice
+  local choice
+  {
+    printf 'Which services?\n'
+    printf '  1) private  this app only (compose.yml)            [default]\n'
+    printf '  2) public   backing services (public/compose.yml): nginx, db, redis\n'
+    printf '  3) all      public first, then private\n'
+  } >&2
+  read -rp 'Choice [1-3, Enter=private]: ' choice
+  case "$choice" in
+    ''|1|private) printf 'private' ;;
+    2|public)     printf 'public'  ;;
+    3|all)        printf 'all'     ;;
+    *) printf 'invalid choice: %s\n' "$choice" >&2; return 1 ;;
+  esac
+}
+
+# Resolve the scope for svc-start/stop/update. An explicit --scope wins. Failing
+# that, a human at a terminal is asked; every non-interactive caller — --defaults,
+# cron, a pipe, svc-update called from a script — takes the documented default,
+# private. Validates its args first, so a typo fails rather than silently
+# dropping into the prompt. Echoes the scope; returns 2 on any misuse, matching
+# the house rule that bad usage exits 2.
+svc_resolve_scope() { # <args...> -> echoes private|public|all
+  local scope
+  scope="$(svc_parse_scope "$@")" || return 2
+  if [[ -n "$scope" ]]; then printf '%s' "$scope"; return 0; fi
+  if [[ -t 0 ]] && ! svc_has_flag --defaults "$@"; then
+    svc_prompt_scope || return 2
+  else
+    printf 'private'
+  fi
 }
 
 compose() { # <file> <args...>

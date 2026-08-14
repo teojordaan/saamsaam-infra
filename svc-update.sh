@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# svc-scripts 0.1.0 — canonical copy: agollum/docker/services/
+# svc-scripts 0.1.1 — canonical copy: agollum/docker/services/
 # Edit there and copy the whole set across; svc-compose.sh is sourced by
 # the others, so a half-updated set breaks in ways that look like a bug.
 # Pull the images the compose files name, then recreate.
@@ -9,6 +9,10 @@
 #   --scope all       both
 #   --force           remove local copies first, so an in-place rebuild at the
 #                     SAME version tag actually lands
+#   --defaults        take the default (private) without prompting
+#
+# With no --scope on an interactive terminal it asks which to update; piped, in
+# cron, or under --defaults it takes private. See svc_resolve_scope.
 #
 # Image tags live in the compose files, so this reads them from there rather
 # than keeping its own list.
@@ -37,7 +41,7 @@ for a in "$@"; do
   esac
 done
 
-SCOPE="$(svc_parse_scope "${ARGS[@]+"${ARGS[@]}"}")" || exit 2
+SCOPE="$(svc_resolve_scope "${ARGS[@]+"${ARGS[@]}"}")" || exit 2
 [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found — run ./svc-build-env.sh first"
 
 images_in() { # <file> — compose's own error passed through on failure
