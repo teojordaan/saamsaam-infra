@@ -115063,7 +115063,7 @@ i=B.d.aX(A.bG(j.i(k,"id")))
 s=!p.m(0,i)?7:8
 break
 case 7:s=9
-return A.i(g.eA(i,A.aq(["id",i,"name",j.i(k,"name"),"kind",j.i(k,"kind"),"color",j.i(k,"color"),"owner_user_id",j.i(k,"owner_user_id"),"updated_at",j.i(k,"updated_at"),"items",[]],n,m)),$async$lZ)
+return A.i(g.eA(i,A.aq(["id",i,"name",j.i(k,"name"),"kind",j.i(k,"kind"),"color",j.i(k,"color"),"owner_user_id",j.i(k,"owner_user_id"),"items",[]],n,m)),$async$lZ)
 case 9:p.C(0,i)
 case 8:case 5:f.length===o||(0,A.x)(f),++l
 s=4
