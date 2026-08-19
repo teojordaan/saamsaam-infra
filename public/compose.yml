@@ -59,7 +59,7 @@ services:
   # postgres — DB/USER/PASSWORD apply on first boot only
   # ═══════════════════════════════════════════════════
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18.4-alpine
     container_name: ${POSTGRES_HOST:-postgres}
     restart: unless-stopped
     environment:
