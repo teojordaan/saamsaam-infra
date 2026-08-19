@@ -82,19 +82,26 @@ services:
     logging: { driver: "local", options: { max-size: "1m", max-file: "3" } }
 
   # ═══════════════════════════════════════════════════
-  # redis — no password; the API's client sends none
+  # redis — password-protected, matching the shared providers
   #
-  # The port is a command flag, not an env var: redis has no
-  # PGPORT equivalent. And unlike pg_isready, redis-cli does NOT
-  # pick the port up implicitly — with no -p it tries 6379 and
-  # fails, so moving REDIS_PORT without the flag below would mark
-  # a perfectly healthy redis unhealthy forever.
+  # --requirepass mirrors local-infra / gentick-infra so the API's
+  # REDIS_PASSWORD works the same whether it dials this standalone
+  # redis or a shared one. ${VAR:?...} fails the bring-up loudly if
+  # --env-file was forgotten, rather than starting an open redis the
+  # API then can't authenticate against.
+  #
+  # Port and password are both command flags, not env vars: redis has
+  # no PGPORT/PGPASSWORD equivalent. And unlike pg_isready, redis-cli
+  # does NOT pick the port up implicitly — with no -p it tries 6379 and
+  # fails, so moving REDIS_PORT without the flag below would mark a
+  # perfectly healthy redis unhealthy forever. The healthcheck must
+  # authenticate too (-a), or it reports NOAUTH and never goes healthy.
   # ═══════════════════════════════════════════════════
   redis:
     image: redis:7-alpine
     container_name: ${REDIS_HOST:-redis}
     restart: unless-stopped
-    command: ["redis-server", "--port", "${REDIS_PORT:-6379}"]
+    command: ["redis-server", "--port", "${REDIS_PORT:-6379}", "--requirepass", "${REDIS_PASSWORD:?not set — run this from public/ with --env-file ../.env}"]
     environment:
       TZ: ${TZ:-Africa/Johannesburg}
     ports:
@@ -103,7 +110,7 @@ services:
     volumes:
       - ${HOST_DATA_ROOT:-/srv/data}/redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "${REDIS_PORT:-6379}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -p ${REDIS_PORT:-6379} -a ${REDIS_PASSWORD} ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 3
