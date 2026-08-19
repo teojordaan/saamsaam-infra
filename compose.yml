@@ -30,37 +30,24 @@ networks:
 
 services:
   # ═══════════════════════════════════════════════════
-  # api — REST API (live)
+  # api — REST API. ONE instance per box.
+  #
+  # Whether a box is dev or live is decided by which box it is — its own
+  # domain, database and Telegram bot token, all carried by its generated
+  # .env (built from .env.example + the box's pragma). There is deliberately
+  # no second `api-staging` service: two instances sharing one Telegram token
+  # 409-fight each other over getUpdates (single-consumer per token), which is
+  # exactly what the old empty-token workaround existed to silence. Run the dev
+  # box and the live box as separate machines instead.
   # ═══════════════════════════════════════════════════
   api:
     image: ghcr.io/teojordaan/saamsaam-api:${API_IMAGE_TAG:-0.0.0-staging}
     container_name: ${PROJECT_NAME:-saamsaam}-api
     restart: unless-stopped
-    env_file: [.env, .env.live]
+    env_file: [.env]
     # The api reads API_JWT_SECRET; .env declares it as API_JWT_SECRET_SAAMSAAM
     # so it cannot collide with another app's signing key in the shared creds
     # directory. `environment:` outranks `env_file:`, so this is the mapping.
-    environment:
-      API_JWT_SECRET: ${API_JWT_SECRET_SAAMSAAM:?not set — is .env built?}
-    networks: [backend-net]
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${API_PORT:-8080}/v1/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    logging: { driver: "local", options: { max-size: "2m", max-file: "3" } }
-
-  # ═══════════════════════════════════════════════════
-  # api-staging — same image, staging tag and database
-  # ═══════════════════════════════════════════════════
-  api-staging:
-    image: ghcr.io/teojordaan/saamsaam-api:${API_IMAGE_TAG:-0.0.0-staging}
-    container_name: ${PROJECT_NAME:-saamsaam}-api-staging
-    restart: unless-stopped
-    env_file: [.env, .env.staging]
-    # Same mapping as live — staging signs with the same key, because it is the
-    # same application. See the api service above.
     environment:
       API_JWT_SECRET: ${API_JWT_SECRET_SAAMSAAM:?not set — is .env built?}
     networks: [backend-net]

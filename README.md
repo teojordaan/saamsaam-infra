@@ -10,12 +10,16 @@ provide some of it.
 
 | File | Services | Runs when |
 |---|---|---|
-| `compose.yml` | `api`, `api-staging` | Always. These are ours on every host. |
+| `compose.yml` | `api` | Always. Ours on every host. One instance per box. |
 | `public/compose.yml` | `nginx`, `postgres`, `redis` | Only on a host that has none of its own. |
 
-On a box running teo-infra (or gentick-infra), `public/` stays down and the api
-containers reach the existing services over `backend-net`. On a bare box, both
-files come up and the stack is self-contained.
+A box runs **one** SaamSaam instance; whether it is dev or live is decided by
+which box it is — its own domain, database and bot token, all carried by its
+generated `.env`. There is no second `api-staging` service.
+
+On a box running local-infra (or gentick-infra), `public/` stays down and the
+api reaches the existing services over `backend-net`. On a bare box, both files
+come up and the stack is self-contained.
 
 Everything joins one network, `backend-net`, so `POSTGRES_HOST=postgres`
 resolves to whichever postgres is running without an env change.
@@ -64,8 +68,12 @@ hands variables to a container at runtime and does **not** feed `${...}`.
 
 ## Environment
 
-`.env` is built by `svc-build-env.sh` and never committed. `.env.live` and
-`.env.staging` are committed overlays applied on top of it, per container.
+`.env` is built by `svc-build-env.sh` and never committed. It is the **single**
+env layer — there are no committed `.env.live`/`.env.staging` overlays any more,
+because a box runs one instance and its per-box identity (domain, database name,
+bot token) comes from its own pragma. `PUBLIC_BASE_URL` is marked `replace` so
+each box must declare its own; getting it wrong emails users links to the wrong
+site.
 
 `PROJECT_NAME` is the root variable — the project data root and the database
 name derive from it.
@@ -157,15 +165,11 @@ because the build rejects any cred still holding a placeholder, a stub cannot
 turn into a silently-wrong `.env`. That rejection is what makes offering to
 scaffold safe at all.
 
-## Creating the databases
+## The database
 
-`POSTGRES_DB` is created by the postgres image on **first boot only**, and only
-that one. The staging database (`POSTGRES_DB` in `.env.staging`) has to be created by
-hand, once:
-
-```bash
-docker exec -it postgres psql -U saamsaam -d saamsaam -c 'CREATE DATABASE saamsaam_staging OWNER saamsaam;'
-```
+`POSTGRES_DB` (`saamsaam`) is created by the postgres image on **first boot
+only**. One instance per box means one database — there is no second staging
+database to create by hand any more.
 
 Changing `POSTGRES_PASSWORD` after first boot does **not** change the password in
 the database — the variable is ignored on every later start. Use `ALTER ROLE`.
@@ -189,8 +193,8 @@ Two roots, at two different scopes:
 ```
 
 **postgres and redis write to the host root, not the project one.** A postgres
-data directory holds a whole *cluster*: `saamsaam`, `saamsaam_staging` and any
-future project's databases all live in it. Filing that under one project's
+data directory holds a whole *cluster*: `saamsaam` and any future project's
+databases all live in it. Filing that under one project's
 folder would put project B's data inside project A's.
 
 `PROJECT_DATA_ROOT` is for files that genuinely belong to one project — user
@@ -206,13 +210,14 @@ Both are outside the repo, and outside any Windows-mounted path.
 
 ## Domains
 
-TLS is terminated by the Cloudflare tunnel in front of nginx, so both server
-blocks listen on port 80.
+TLS is terminated by the Cloudflare tunnel in front of nginx, so nginx listens
+on port 80.
 
-| Domain | Upstream |
-|---|---|
-| `sm.teojordaan.com` | `saamsaam-api-staging:8080` |
-| `saamsaam.archyta.com` | `saamsaam-api:8080` |
+One instance per box means one domain per box, served by a single nginx server
+block (`server_name _`, a catch-all) that proxies `/api/` to `saamsaam-api:8080`.
+The box's public domain — `sm.teojordaan.com` on the dev box,
+`saamsaam.archyta.com` on the live box — is declared in the api's
+`PUBLIC_BASE_URL` (the domain in emailed links), not pinned in nginx.
 
 nginx addresses the api by **container** name. Compose gives a container both its
 container name and its service name as network aliases, and either resolves
