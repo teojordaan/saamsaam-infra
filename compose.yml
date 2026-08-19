@@ -6,6 +6,12 @@
 # Image tags and container names live here rather than in .env: commit -> push
 # -> pull is the only way anything reaches a server, so a tag in a tracked file
 # makes the deployed version visible in git history. .env is for credentials.
+#
+# The api image tag carries a ${API_IMAGE_TAG:-...} default so a test harness can
+# point this same compose at a :testing image via the environment, without
+# editing-and-reverting the tag. Unset (the deploy case) resolves to the tracked
+# default below, so git history still shows the deployed version. Do NOT pin
+# API_IMAGE_TAG in .env: a gitignored override would silently shadow that default.
 
 name: ${PROJECT_NAME:-saamsaam}
 
@@ -27,7 +33,7 @@ services:
   # api — REST API (live)
   # ═══════════════════════════════════════════════════
   api:
-    image: ghcr.io/teojordaan/saamsaam-api:0.0.0-staging
+    image: ghcr.io/teojordaan/saamsaam-api:${API_IMAGE_TAG:-0.0.0-staging}
     container_name: ${PROJECT_NAME:-saamsaam}-api
     restart: unless-stopped
     env_file: [.env, .env.live]
@@ -49,7 +55,7 @@ services:
   # api-staging — same image, staging tag and database
   # ═══════════════════════════════════════════════════
   api-staging:
-    image: ghcr.io/teojordaan/saamsaam-api:0.0.0-staging
+    image: ghcr.io/teojordaan/saamsaam-api:${API_IMAGE_TAG:-0.0.0-staging}
     container_name: ${PROJECT_NAME:-saamsaam}-api-staging
     restart: unless-stopped
     env_file: [.env, .env.staging]
