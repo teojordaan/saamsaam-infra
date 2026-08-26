@@ -71,7 +71,12 @@ services:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:${POSTGRES_PORT:-5432}"
     networks: [backend-net]
     volumes:
-      - ${HOST_DATA_ROOT:-/srv/data}/postgres:/var/lib/postgresql/data
+      # Postgres 18 moved PGDATA into a version-specific subdir and expects the
+      # volume mounted at the parent /var/lib/postgresql (NOT /var/lib/postgresql/data,
+      # the pre-18 convention). Mounting at .../data makes initdb refuse to start
+      # ("data appears in an unused mount/volume"). The host dir then holds
+      # <root>/postgres/18/docker/... — a bare/empty dir initialises cleanly.
+      - ${HOST_DATA_ROOT:-/srv/data}/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 30s
