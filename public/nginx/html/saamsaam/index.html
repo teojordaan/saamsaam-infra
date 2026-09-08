@@ -5,8 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#1B6EF3">
   <title>SaamSaam</title>
+  <!-- Flutter substitutes this at build time: "/" by default, or whatever
+       --base-href was passed. Hardcoding "/" here makes --base-href a fatal
+       build error ("Failed to find the placeholder for base href"), so the app
+       could never be served from a subpath. nginx serves it at the domain root
+       today, which is why nobody hit it until the build scripts were reworked. -->
   <base href="/">
   <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png"/>
   <style>
     body { margin: 0; overflow-y: scroll; user-select: none; -webkit-user-select: none; }
     #loading {
@@ -14,6 +21,121 @@
       height: 100vh; font-family: system-ui, sans-serif; color: #666;
     }
   </style>
+  <!-- PWA app-shell bridge (sync-engine v2 M4). Runs BEFORE flutter_bootstrap.js
+       for two reasons that both need to happen early:
+         1. `beforeinstallprompt` fires once, before Flutter boots. We capture
+            and stash it so the Settings "Add to Home Screen" control can fire
+            the native prompt later.
+         2. Flutter 3.29+ still registers a deprecated, self-unregistering stub
+            service worker (flutter_service_worker.js). We own the caching shell
+            SW, so we intercept navigator.serviceWorker.register to swallow that
+            stub — otherwise the two collide on scope '/' and the stub's
+            self-unregister can tear ours down. (The clean long-term fix is a
+            `--pwa-strategy=none` build; that is an agollum build-flag change,
+            reported separately. This interception is the repo-only equivalent.)
+       Everything the Dart runtime (pwa_runtime_web.dart) needs is exposed on the
+       single window.__saamsaamPwa object. -->
+  <script>
+    (function () {
+      var bridge = {
+        deferredPrompt: null,
+        canInstall: function () { return !!bridge.deferredPrompt; },
+        isStandalone: function () {
+          try {
+            return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                   window.navigator.standalone === true;
+          } catch (e) { return false; }
+        },
+        isIos: function () {
+          var ua = window.navigator.userAgent || '';
+          var iOSDevice = /iPad|iPhone|iPod/.test(ua);
+          // iPadOS 13+ reports as a Mac but has touch — catch it too.
+          var iPadOS = window.navigator.platform === 'MacIntel' &&
+                       window.navigator.maxTouchPoints > 1;
+          return iOSDevice || iPadOS;
+        },
+        promptInstall: function () {
+          var e = bridge.deferredPrompt;
+          if (!e) return Promise.resolve(false);
+          try {
+            e.prompt();
+            return e.userChoice.then(function (choice) {
+              // The event can only be used once.
+              bridge.deferredPrompt = null;
+              notifyChange();
+              return choice && choice.outcome === 'accepted';
+            });
+          } catch (err) {
+            return Promise.resolve(false);
+          }
+        },
+        requestPersistentStorage: function () {
+          try {
+            if (navigator.storage && navigator.storage.persist) {
+              return navigator.storage.persisted().then(function (already) {
+                if (already) return true;
+                return navigator.storage.persist();
+              });
+            }
+          } catch (e) {}
+          return Promise.resolve(false);
+        },
+        applyUpdate: function () {
+          // Purge the cached shell generation, then hard-reload so cache-first
+          // re-fetches the new build atomically.
+          var reload = function () { window.location.reload(); };
+          try {
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+              var ch = new MessageChannel();
+              ch.port1.onmessage = reload;
+              navigator.serviceWorker.controller.postMessage({ type: 'PURGE_SHELL' }, [ch.port2]);
+              // Fallback if the SW never answers.
+              setTimeout(reload, 1500);
+              return Promise.resolve();
+            }
+          } catch (e) {}
+          reload();
+          return Promise.resolve();
+        },
+      };
+
+      function notifyChange() {
+        try { window.dispatchEvent(new Event('saamsaam-pwa-change')); } catch (e) {}
+      }
+
+      window.__saamsaamPwa = bridge;
+
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        bridge.deferredPrompt = e;
+        notifyChange();
+      });
+      window.addEventListener('appinstalled', function () {
+        bridge.deferredPrompt = null;
+        notifyChange();
+      });
+
+      // Suppress Flutter's deprecated stub SW registration (see comment above).
+      if ('serviceWorker' in navigator && navigator.serviceWorker.register) {
+        var nativeRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+        navigator.serviceWorker.register = function (url, opts) {
+          if (String(url).indexOf('flutter_service_worker.js') !== -1) {
+            // Hand Flutter a resolved-but-empty registration; its loader
+            // tolerates the failure and boots normally.
+            return Promise.resolve(undefined);
+          }
+          return nativeRegister(url, opts);
+        };
+        // Register our own shell service worker. Relative URL → resolves against
+        // <base href>, so the scope is correct for a subpath deploy too.
+        window.addEventListener('load', function () {
+          nativeRegister('service_worker.js').catch(function (err) {
+            console.warn('shell service worker registration failed:', err);
+          });
+        });
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="loading">Loading SaamSaam…</div>

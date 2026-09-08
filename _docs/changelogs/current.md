@@ -1,7 +1,23 @@
 # Unreleased
 
+### Added
+
+- README: a **web bundle** section (one directory, why it is committed, why it is
+  byte-opaque) and a **deploying** section that separates the frontend path from
+  the backend one and states plainly that nothing in this repo decides whether a
+  box is dev or live — the box's own pragma does.
+
 ### Fixed
 
+- **The README documented a credentials directory that no longer exists.** It
+  described `/srv/data/creds`, one file per secret, and a `--init-creds` flag —
+  the pre-0.1.0 shape. Secrets have been one `KEY=value` file at
+  `/srv/data/pragma` since svc-scripts 0.1.0, with no fallback to the old layout,
+  so anyone standing up a new box from this README would have built the wrong
+  thing and hit a refusal they could not explain. Also corrects the script set's
+  stated version, which still read 0.0.0.
+- `.gitignore` claimed `.env.live` and `.env.staging` were tracked files. They
+  were deleted with the split; `.env` is the only env layer.
 - **The API and postgres were given different credentials.** `.env.example`
   carried both `POSTGRES_*` (read by the postgres image) and `PG_*` (read by the
   API) as independent values, and they disagreed — a fresh clone initialised the
@@ -24,6 +40,19 @@
 
 ### Changed
 
+- **The web bundle is one directory again.** `public/nginx/html/saamsaam-staging`
+  is gone and its contents are now `public/nginx/html/saamsaam`, the directory
+  nginx actually mounts. The two had drifted — the served folder held an older
+  build than the one every new build was landing in — which is the last limb of
+  the staging/live split to come out.
+- The built bundle is stored as opaque bytes (`.gitattributes`:
+  `public/nginx/html/** -text`). `text=auto` had been rewriting the line endings
+  of its `.js`/`.json`/`.html`, so the file nginx served was not the file that was
+  built and tested.
+- The `svc-*.sh` set is refreshed from the canonical copies in
+  `agollum/docker/services/` at **version 0.1.1**, whole set as required. This
+  adds `svc-gen-nanomq.sh`, which `svc-start.sh` now calls first; it is a no-op
+  here, where there is no broker config to render.
 - `postgres` and `redis` take their configuration through `${...}` instead of
   `env_file: ../.env`, which had been handing the postgres container every
   secret in the repo — SMTP password, JWT secret and Telegram token included.
