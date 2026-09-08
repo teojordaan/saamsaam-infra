@@ -230,16 +230,64 @@ Both are outside the repo, and outside any Windows-mounted path.
 > inside WSL is the VM's own ext4, so it works. Reach it from Windows at
 > `\\wsl$\<distro>\srv\data\`.
 
+## The two boxes
+
+SaamSaam runs one instance per box, and there are two.
+
+| | Dev | Live |
+|---|---|---|
+| Host | this workstation (WSL Ubuntu) | `rek.teojordaan.com` — a Windows PC, WSL Ubuntu-24.04 |
+| Domain | `sm.teojordaan.com` | `saamsaam.archyta.com` |
+| Backing services | `local-infra` provides them | **nothing does** — this repo brings its own |
+| Scope | `./svc-start.sh --scope private` | `./svc-start.sh --scope all` |
+| Tunnel | — | `cloudflared`, a Windows service, dialling `localhost:8080` |
+
+Nothing in this repo says which box is which. The whole difference is the box's
+own `/srv/data/pragma`: `PUBLIC_BASE_URL`, `TELEGRAM_BOT_TOKEN` and the database
+credentials. So the same commit deploys to either, and the mistake that would
+hurt — a live box emailing links to the dev domain — is caught by
+`svc-build-env.sh` refusing to write a `.env` with `PUBLIC_BASE_URL` unfilled.
+
+> **The Telegram tokens must differ.** `getUpdates` is single-consumer per token:
+> two boxes polling the same bot 409-fight each other and neither works reliably.
+> A box that should not run Telegram at all leaves the pragma key empty — the api
+> reads that as "disabled", logs it, and starts no poller.
+
+### Standing up the live box
+
+The backing services come from this repo there, so it is the `--scope all` path.
+Everything below is one-off, per box:
+
+1. `dockerd` running in WSL. The distro has `systemd=false`, so it does not start
+   itself.
+2. `/srv/data/pragma` — mode 600, owned by the deploy user, holding the keys
+   `svc-build-env.sh --check` names. `POSTGRES_*`, `REDIS_PASSWORD`, `SMTP_*`,
+   `API_JWT_SECRET_SAAMSAAM`, the `TELEGRAM_*` set, and `PUBLIC_BASE_URL`.
+3. `git clone` this repo to `/srv/saamsaam-infra` — inside the WSL filesystem,
+   never under `/mnt/c`. DrvFs has no real `chmod` and `initdb` refuses to run
+   there; the compose file looks fine and the real error is three levels down in
+   `docker logs`.
+4. `docker login ghcr.io`, once, so `svc-update.sh` can pull the api image.
+5. `./svc-build-env.sh` then `./svc-start.sh --scope all`.
+6. The Cloudflare tunnel's public hostname points at `http://localhost:8080`.
+   WSL2 forwards a published port to the Windows host, which is how a cloudflared
+   running as a Windows service reaches nginx inside the VM.
+
+`POSTGRES_DB` is honoured on **first boot only**, so step 5 creates the
+`saamsaam` database exactly once — on a box whose postgres cluster already
+existed, create it by hand instead.
+
 ## Domains
 
 TLS is terminated by the Cloudflare tunnel in front of nginx, so nginx listens
-on port 80.
+on port 80 and publishes it as `8080` on the host. There is no `listen 443` and
+no certs mount; both were removed once it was clear nothing terminated TLS here.
 
 One instance per box means one domain per box, served by a single nginx server
 block (`server_name _`, a catch-all) that proxies `/api/` to `saamsaam-api:8080`.
-The box's public domain — `sm.teojordaan.com` on the dev box,
-`saamsaam.archyta.com` on the live box — is declared in the api's
-`PUBLIC_BASE_URL` (the domain in emailed links), not pinned in nginx.
+The box's public domain is declared in the api's `PUBLIC_BASE_URL` — the domain
+in emailed links — and is deliberately not pinned in nginx, so the same config
+serves either box.
 
 nginx addresses the api by **container** name. Compose gives a container both its
 container name and its service name as network aliases, and either resolves
@@ -350,9 +398,25 @@ Commit → push → pull on the server. That is the only way files reach it.
   serves the bind-mounted directory immediately; no rebuild, no registry, no
   restart.
 - **Backend** — build and push the `saamsaam-api` image to GHCR, move
-  `API_IMAGE_TAG` in the tracked `.env.example`, commit, push, pull, then
-  `./svc-update.sh`. The tag lives in a tracked file so the deployed version is
-  visible in git history; pinning it in the gitignored `.env` would hide it.
+  `API_IMAGE_TAG` in the tracked `.env.example`, commit, push, pull, then on the
+  box:
+
+  ```bash
+  ./svc-build-env.sh          # <- NOT optional. See below.
+  ./svc-update.sh
+  ```
+
+  The tag lives in a tracked file so the deployed version is visible in git
+  history; pinning it in the gitignored `.env` would hide it.
+
+  > **Rebuilding `.env` is the step that is easy to skip and silent when you do.**
+  > `svc-build-env.sh` copies every non-secret line of `.env.example` through
+  > verbatim, so the generated `.env` holds its own copy of `API_IMAGE_TAG` — and
+  > compose reads `.env` **before** the `${API_IMAGE_TAG:-0.0.0}` default in
+  > `compose.yml`. `svc-update.sh` checks that `.env` exists but never regenerates
+  > it. So a pull that brings a new tag, followed straight by `svc-update.sh`,
+  > cheerfully re-pulls and redeploys the version that was already running, and
+  > reports success.
 
 A box is dev or live by virtue of being that box. Nothing in this repo says
 which — the difference is entirely in the box's own `/srv/data/pragma`
