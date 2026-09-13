@@ -10,3 +10,11 @@
 *.conf    text eol=lf
 *.yml     text eol=lf
 .env.*    text eol=lf
+
+# The built web bundle round-trips as OPAQUE BYTES. `text=auto` above would
+# otherwise autodetect the .js/.json/.html in it as text and rewrite their line
+# endings, so the file nginx serves is not the file that was built and tested —
+# flutter_service_worker.js alone lost 31 bytes that way. Nothing in a build
+# artefact should be edited by hand, so there is nothing for normalisation to
+# fix, and a bundle whose content hashes stop matching its bytes fails silently.
+public/nginx/html/** -text

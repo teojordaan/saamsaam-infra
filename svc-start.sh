@@ -38,6 +38,12 @@ SCOPE="$(svc_resolve_scope "$@")" || exit 2
 
 [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found — run ./svc-build-env.sh first"
 
+# Render any repo-specific broker config (nanomq pwd/ACL) from .env BEFORE bringing
+# services up. On a fresh clone those generated files do not exist; if the broker
+# starts first, docker bind-mounts an empty directory over each and nanomq crash-
+# loops with "input in flex scanner failed". No-op where there is no nanomq.
+ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/svc-gen-nanomq.sh" || die "broker config generation failed"
+
 while read -r file; do
   [[ -f "$file" ]] || die "$file not found"
   label="$(basename "$(dirname "$file")")"

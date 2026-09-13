@@ -1,7 +1,11 @@
 # Secrets
-# .env is built by build-env.sh from the creds directory and never
-# committed. .env.example, .env.live and .env.staging are tracked —
-# they hold no secrets.
+# .env is built by svc-build-env.sh from the box's pragma file and is
+# never committed. .env.example is tracked; it holds no secrets, only
+# the declaration of what needs filling. There are no .env.live /
+# .env.staging overlays — a box runs ONE instance, so .env is the only
+# env layer and this is the only pattern that may be ignored. A blanket
+# .env* would also swallow .env.example, and the stack would then start
+# on defaults in every fresh clone.
 .env
 
 # Temp/cleanup scripts
@@ -18,6 +22,9 @@ Thumbs.db
 
 # public/nginx/html is NOT ignored. The built frontend is committed
 # there, because commit -> push -> pull is the only way files reach a
-# server and a standalone deploy has to be able to serve it. The
-# build lands there first, then gets copied into teo-infra/nginx/html
-# on hosts where that stack is serving.
+# server and a standalone deploy has to be able to serve it. There is
+# ONE bundle directory, html/saamsaam — a box runs one instance, so
+# there is no second html/saamsaam-staging to keep in step. The build
+# lands here first, then gets copied into the shared provider's
+# nginx/html (local-infra on the dev box, gentick-infra on a server)
+# on hosts where that stack is the one serving.
