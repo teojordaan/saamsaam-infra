@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# svc-scripts 0.1.1 — canonical copy: agollum/docker/services/
+# svc-scripts 0.1.2 — canonical copy: agollum/docker/services/
 # Edit there and copy the whole set across; svc-compose.sh is sourced by
 # the others, so a half-updated set breaks in ways that look like a bug.
 # Bring the stack up, or the part of it this host needs.
@@ -38,11 +38,26 @@ SCOPE="$(svc_resolve_scope "$@")" || exit 2
 
 [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found — run ./svc-build-env.sh first"
 
-# Render any repo-specific broker config (nanomq pwd/ACL) from .env BEFORE bringing
-# services up. On a fresh clone those generated files do not exist; if the broker
-# starts first, docker bind-mounts an empty directory over each and nanomq crash-
-# loops with "input in flex scanner failed". No-op where there is no nanomq.
-ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/svc-gen-nanomq.sh" || die "broker config generation failed"
+# Render a broker's generated config (nanomq pwd/ACL) from .env BEFORE bringing
+# services up -- but ONLY in a repo that carries the generator. A stack with no
+# broker does not ship svc-gen-nanomq.sh at all, so this is skipped outright
+# rather than running a no-op that reports on a broker the stack never had.
+#
+# Where the generator IS present the call stays automatic, deliberately. The
+# files it writes are gitignored, so on a fresh clone they do not exist, and a
+# broker started before them has docker bind-mount an empty DIRECTORY over each
+# missing file. nanomq then crash-loops with "input in flex scanner failed" --
+# three levels down in `docker logs`, reading as a broken image. Generating
+# first is what prevents that, and it has to happen on every bring-up rather
+# than whenever someone remembers.
+#
+# Invoked through `bash` rather than executed directly: the mode bit does not
+# survive every checkout (a copy committed from Windows lands 644), and a
+# generator that is present but not executable must not take the whole bring-up
+# down with "Permission denied".
+if [[ -f "$SCRIPT_DIR/svc-gen-nanomq.sh" ]]; then
+  ENV_FILE="$ENV_FILE" bash "$SCRIPT_DIR/svc-gen-nanomq.sh" || die "broker config generation failed"
+fi
 
 while read -r file; do
   [[ -f "$file" ]] || die "$file not found"
