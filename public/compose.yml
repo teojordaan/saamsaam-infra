@@ -103,8 +103,15 @@ services:
   # no PGPORT/PGPASSWORD equivalent. And unlike pg_isready, redis-cli
   # does NOT pick the port up implicitly — with no -p it tries 6379 and
   # fails, so moving REDIS_PORT without the flag below would mark a
-  # perfectly healthy redis unhealthy forever. The healthcheck must
-  # authenticate too (-a), or it reports NOAUTH and never goes healthy.
+  # perfectly healthy redis unhealthy forever.
+  #
+  # The healthcheck must authenticate, but it MUST NOT do so with -a. Its
+  # test runs under CMD-SHELL, so the string reaches sh AFTER compose has
+  # interpolated it, and a password containing '$' is then expanded a
+  # SECOND time -- a literal '$$' became the shell's own PID and every
+  # probe failed WRONGPASS against a password that was correct everywhere
+  # else. REDISCLI_AUTH below is read by redis-cli directly, so the secret
+  # never passes through a shell at all.
   # ═══════════════════════════════════════════════════
   redis:
     image: redis:7-alpine
@@ -113,13 +120,14 @@ services:
     command: ["redis-server", "--port", "${REDIS_PORT:-6379}", "--requirepass", "${REDIS_PASSWORD:?not set — run this from public/ with --env-file ../.env}"]
     environment:
       TZ: ${TZ:-Africa/Johannesburg}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?not set — run this from public/ with --env-file ../.env}
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6379}:${REDIS_PORT:-6379}"
     networks: [backend-net]
     volumes:
       - ${HOST_DATA_ROOT:-/srv/data}/redis:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p ${REDIS_PORT:-6379} -a ${REDIS_PASSWORD} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -p ${REDIS_PORT:-6379} ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 3

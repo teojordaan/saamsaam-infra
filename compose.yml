@@ -48,8 +48,21 @@ services:
     # The api reads API_JWT_SECRET; .env declares it as API_JWT_SECRET_SAAMSAAM
     # so it cannot collide with another app's signing key in the box's shared
     # pragma file. `environment:` outranks `env_file:`, so this is the mapping.
+    #
+    # POSTGRES_PASSWORD and REDIS_PASSWORD are re-declared below, overriding the
+    # copies env_file: has already handed this container. They have to be: .env
+    # feeds two mechanisms with OPPOSITE escaping rules. Compose interpolates
+    # .env, so a literal '$' in a secret is stored DOUBLED there ('pa$$word');
+    # env_file: does not interpolate, so it hands the api that doubled text
+    # verbatim -- a password two characters longer than the one postgres and
+    # redis were actually started with, failing authentication against servers
+    # whose credentials are perfectly correct. Routing them through ${...} here
+    # puts them back on the interpolation path, the same one the servers' own
+    # credentials took. Any future secret that may contain '$' needs this too.
     environment:
       API_JWT_SECRET: ${API_JWT_SECRET_SAAMSAAM:?not set — is .env built?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?not set — is .env built?}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?not set — is .env built?}
     networks: [backend-net]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${API_PORT:-8080}/v1/healthz"]
